@@ -1,0 +1,237 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum ROLES {
+  ADMIN
+  HR
+  EMPLOYEE
+}
+
+enum WITHDRAW_STATUS {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+  FAILED
+}
+
+enum FEE_MODE {
+  PERCENTAGE
+  FIXED
+  MIXED
+}
+
+enum FUND_SOURCE_TYPE {
+  COMPANY_LOCK
+  AAVE
+}
+
+model User {
+  id               String    @id @default(uuid())
+  wallet_address   String?   @unique
+  email            String    @unique
+  phone            String?   @unique
+  role             ROLES
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+  deleted          Boolean   @default(false)
+  employees        Employee[]
+  approvedWorkLogs EmployeeWorkLog[] @relation("ApprovedBy")
+
+  @@map("users")
+}
+
+model Company {
+  id                    String              @id @default(uuid())
+  name                  String
+  address               String?
+  min_lock_percentage   Decimal
+  fee_share_company     Decimal
+  fee_share_platform    Decimal
+  created_at            DateTime            @default(now())
+  updated_at            DateTime            @updatedAt
+  deleted               Boolean             @default(false)
+  employees             Employee[]
+  payroll_cycles        PayrollCycle[]
+  company_lock_pools    CompanyLockPool[]
+  withdraw_fee_rules    WithdrawFeeRule[]
+
+  @@map("companies")
+}
+
+model Employee {
+  id                  String              @id @default(uuid())
+  user_id             String
+  company_id          String
+  employee_number     String?
+  position            String?
+  base_salary         Decimal
+  wallet_address      String              @unique
+  status              String?
+  sbt_token_id        String?             @unique
+  employed_started    DateTime?
+  employed_ended      DateTime?
+  created_at          DateTime            @default(now())
+  updated_at          DateTime            @updatedAt
+  deleted             Boolean             @default(false)
+  user                User                @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  company             Company             @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  work_logs           EmployeeWorkLog[]
+  withdraw_limits     WithdrawLimit[]
+  withdraw_requests   WithdrawRequest[]
+  repay_records       RepayRecord[]
+
+  @@index([user_id])
+  @@index([company_id])
+  @@map("employees")
+}
+
+model PayrollCycle {
+  id                 String              @id @default(uuid())
+  company_id         String
+  period_start       DateTime            @db.Date
+  period_end         DateTime            @db.Date
+  payout_date        DateTime            @db.Date
+  total_working_days Int
+  created_at         DateTime            @default(now())
+  updated_at         DateTime            @updatedAt
+  company            Company             @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  employee_work_logs EmployeeWorkLog[]
+  company_lock_pools CompanyLockPool[]
+  withdraw_limits    WithdrawLimit[]
+  withdraw_requests  WithdrawRequest[]
+  repay_records      RepayRecord[]
+
+  @@index([company_id])
+  @@map("payroll_cycles")
+}
+
+model EmployeeWorkLog {
+  id               String       @id @default(uuid())
+  employee_id      String
+  payroll_cycle_id String
+  date             DateTime     @db.Date
+  hours_worked     Decimal
+  approved_by_id   String?
+  created_at       DateTime     @default(now())
+  employee         Employee     @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  payroll_cycle    PayrollCycle @relation(fields: [payroll_cycle_id], references: [id], onDelete: Cascade)
+  approved_by      User?        @relation("ApprovedBy", fields: [approved_by_id], references: [id], onDelete: NoAction)
+
+  @@index([employee_id])
+  @@index([payroll_cycle_id])
+  @@index([approved_by_id])
+  @@map("employee_work_logs")
+}
+
+model CompanyLockPool {
+  id                     String       @id @default(uuid())
+  company_id             String
+  payroll_cycle_id       String       @unique
+  required_locked_amount Decimal
+  actual_locked_amount   Decimal
+  available_amount       Decimal
+  locked_tx_hash         String?
+  unlock_tx_hash         String?
+  created_at             DateTime     @default(now())
+  updated_at             DateTime     @updatedAt
+  company                Company      @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  payroll_cycle          PayrollCycle @relation(fields: [payroll_cycle_id], references: [id], onDelete: Cascade)
+
+  @@index([company_id])
+  @@map("company_lock_pools")
+}
+
+model WithdrawFeeRule {
+  id                                 String   @id @default(uuid())
+  company_id                         String   @unique
+  fee_mode                           FEE_MODE
+  base_percentage                    Decimal?
+  max_percentage                     Decimal?
+  base_fixed_amount                  Decimal?
+  early_access_penalty_perc_per_gap  Decimal?
+  created_at                         DateTime @default(now())
+  company                            Company  @relation(fields: [company_id], references: [id], onDelete: Cascade)
+
+  @@map("withdraw_fee_rules")
+}
+
+model WithdrawLimit {
+  id                 String       @id @default(uuid())
+  employee_id        String
+  payroll_cycle_id   String
+  max_withdraw_amount Decimal
+  used_amount        Decimal
+  remaining_amount   Decimal
+  calculated_at      DateTime
+  employee           Employee     @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  payroll_cycle      PayrollCycle @relation(fields: [payroll_cycle_id], references: [id], onDelete: Cascade)
+
+  @@unique([employee_id, payroll_cycle_id])
+  @@index([employee_id])
+  @@index([payroll_cycle_id])
+  @@map("withdraw_limits")
+}
+
+model WithdrawRequest {
+  id                         String                @id @default(uuid())
+  employee_id                String
+  payroll_cycle_id           String
+  requested_amount           Decimal
+  approved_amount            Decimal?
+  fee_total_amount           Decimal?
+  company_fee_amount         Decimal?
+  platform_fee_amount        Decimal?
+  extra_liquidity_fee_amount Decimal?
+  status                     WITHDRAW_STATUS       @default(PENDING)
+  created_at                 DateTime              @default(now())
+  updated_at                 DateTime              @updatedAt
+  employee                   Employee              @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  payroll_cycle              PayrollCycle          @relation(fields: [payroll_cycle_id], references: [id], onDelete: Cascade)
+  fund_sources               WithdrawFundSource[]
+  repay_records              RepayRecord[]
+
+  @@index([employee_id])
+  @@index([payroll_cycle_id])
+  @@map("withdraw_requests")
+}
+
+model WithdrawFundSource {
+  id                  String          @id @default(uuid())
+  withdraw_request_id String
+  source_type         FUND_SOURCE_TYPE
+  amount              Decimal
+  tx_hash             String?
+  created_at          DateTime        @default(now())
+  withdraw_request    WithdrawRequest @relation(fields: [withdraw_request_id], references: [id], onDelete: Cascade)
+
+  @@index([withdraw_request_id])
+  @@map("withdraw_fund_sources")
+}
+
+model RepayRecord {
+  id                  String          @id @default(uuid())
+  withdraw_request_id String          @unique
+  employee_id         String
+  payroll_cycle_id    String
+  repay_amount        Decimal
+  repay_source        String?
+  tx_hash             String?
+  repaid_at           DateTime?
+  withdraw_request    WithdrawRequest @relation(fields: [withdraw_request_id], references: [id], onDelete: Cascade)
+  employee            Employee        @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  payroll_cycle       PayrollCycle    @relation(fields: [payroll_cycle_id], references: [id], onDelete: Cascade)
+
+  @@index([employee_id])
+  @@index([payroll_cycle_id])
+  @@map("repay_records")
+}
